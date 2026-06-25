@@ -1,0 +1,66 @@
+[package]
+name = "cups-http-gateway"
+version = "0.1.0"
+edition = "2021"
+description = "HTTP gateway between REST clients and a CUPS print server"
+license = "MIT"
+repository = "https://github.com/Sincpro-SRL/cups-http-gateway"
+keywords = ["cups", "printing", "ipp", "http", "gateway"]
+categories = ["network-programming", "command-line-utilities"]
+rust-version = "1.75"
+
+# ── Library: domain + adapters + services (no HTTP required) ─────────────────
+[lib]
+name = "cups_http_gateway"
+path = "src/lib.rs"
+
+# ── Binary: the standalone HTTP gateway ───────────────────────────────────────
+[[bin]]
+name = "cups-http-gateway"
+path = "src/main.rs"
+required-features = ["http-server"]
+
+# ── Features ──────────────────────────────────────────────────────────────────
+[features]
+default = ["http-server"]
+http-server = [
+    "dep:axum",
+    "dep:tower-http",
+    "dep:clap",
+    "dep:tracing-subscriber",
+]
+
+# ── Core dependencies (always compiled) ───────────────────────────────────────
+[dependencies]
+ipp        = { version = "4", features = ["async-client"] }
+tokio      = { version = "1", features = ["full"] }
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror  = "1"
+base64     = "0.22"
+http       = "1"
+tracing    = "0.1"
+
+# ── HTTP server dependencies (optional, gated by http-server feature) ─────────
+axum           = { version = "0.7", optional = true }
+tower-http     = { version = "0.5", features = ["cors", "trace"], optional = true }
+clap           = { version = "4",   features = ["derive"], optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+
+# ── Lints (enforced in CI via -D warnings) ────────────────────────────────────
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+# pedantic must have lower priority than individual overrides
+pedantic                = { level = "warn", priority = -1 }
+# Noisy rules disabled for this codebase
+module_name_repetitions = "allow"
+missing_errors_doc      = "allow"
+missing_panics_doc      = "allow"
+# IppError is inherently large (272 bytes) — boxing it breaks the ? operator
+# ergonomics throughout the adapter layer without meaningful benefit
+large_enum_variant      = "allow"
+result_large_err        = "allow"
+# Constructors don't need #[must_use] in application code
+must_use_candidate      = "allow"

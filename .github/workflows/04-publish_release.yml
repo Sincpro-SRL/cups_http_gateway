@@ -1,0 +1,16 @@
+---
+name: Publish release
+
+on:
+  release:
+    types: [published]
+
+env:
+  CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+jobs:
+  validate:
+    uses: Sincpro-SRL/.github/.github/workflows/04-publish_release.yaml@main
+    secrets: inherit
+    with:
+      environments: '["stable"]'
