@@ -1,0 +1,14 @@
+name: Check code
+
+# Run this workflow every time a new commit pushed to your repository
+on: push
+
+env:
+  CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+jobs:
+  validate:
+    uses: Sincpro-SRL/.github/.github/workflows/02-check_code.yaml@main
+    secrets: inherit
+    with:
+      environments: '["stable"]'
