@@ -110,10 +110,92 @@ publish-dry:
 	echo "Dry-run publish (no upload)..."
 	cargo publish --dry-run
 
+# ── Cross-platform release builds ─────────────────────────────────────────────
+
+CARGO_VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+BINARY_NAME   := cups-http-gateway
+DIST_DIR      := dist
+
+$(DIST_DIR):
+	mkdir -p $(DIST_DIR)
+
+install-cross:
+	@if ! command -v cross > /dev/null 2>&1; then \
+		echo "Installing cross..."; \
+		cargo install cross --locked; \
+	else \
+		echo "cross already installed: $$(cross --version)"; \
+	fi
+
+build-linux-x64:
+	rustup target add x86_64-unknown-linux-gnu
+	cargo build --release --target x86_64-unknown-linux-gnu
+
+build-linux-arm64:
+	rustup target add aarch64-unknown-linux-gnu
+	cross build --release --target aarch64-unknown-linux-gnu
+
+build-macos-x64:
+	rustup target add x86_64-apple-darwin
+	cargo build --release --target x86_64-apple-darwin
+
+build-macos-arm64:
+	rustup target add aarch64-apple-darwin
+	cargo build --release --target aarch64-apple-darwin
+
+build-windows-x64:
+	rustup target add x86_64-pc-windows-msvc
+	cargo build --release --target x86_64-pc-windows-msvc
+
+package-linux-x64: $(DIST_DIR)
+	$(eval TARGET := x86_64-unknown-linux-gnu)
+	cp target/$(TARGET)/release/$(BINARY_NAME) $(DIST_DIR)/$(BINARY_NAME)
+	tar -czf $(DIST_DIR)/$(BINARY_NAME)-$(CARGO_VERSION)-$(TARGET).tar.gz -C $(DIST_DIR) $(BINARY_NAME)
+	rm $(DIST_DIR)/$(BINARY_NAME)
+	echo "Packaged: $(DIST_DIR)/$(BINARY_NAME)-$(CARGO_VERSION)-$(TARGET).tar.gz"
+
+package-linux-arm64: $(DIST_DIR)
+	$(eval TARGET := aarch64-unknown-linux-gnu)
+	cp target/$(TARGET)/release/$(BINARY_NAME) $(DIST_DIR)/$(BINARY_NAME)
+	tar -czf $(DIST_DIR)/$(BINARY_NAME)-$(CARGO_VERSION)-$(TARGET).tar.gz -C $(DIST_DIR) $(BINARY_NAME)
+	rm $(DIST_DIR)/$(BINARY_NAME)
+	echo "Packaged: $(DIST_DIR)/$(BINARY_NAME)-$(CARGO_VERSION)-$(TARGET).tar.gz"
+
+package-macos-x64: $(DIST_DIR)
+	$(eval TARGET := x86_64-apple-darwin)
+	cp target/$(TARGET)/release/$(BINARY_NAME) $(DIST_DIR)/$(BINARY_NAME)
+	tar -czf $(DIST_DIR)/$(BINARY_NAME)-$(CARGO_VERSION)-$(TARGET).tar.gz -C $(DIST_DIR) $(BINARY_NAME)
+	rm $(DIST_DIR)/$(BINARY_NAME)
+	echo "Packaged: $(DIST_DIR)/$(BINARY_NAME)-$(CARGO_VERSION)-$(TARGET).tar.gz"
+
+package-macos-arm64: $(DIST_DIR)
+	$(eval TARGET := aarch64-apple-darwin)
+	cp target/$(TARGET)/release/$(BINARY_NAME) $(DIST_DIR)/$(BINARY_NAME)
+	tar -czf $(DIST_DIR)/$(BINARY_NAME)-$(CARGO_VERSION)-$(TARGET).tar.gz -C $(DIST_DIR) $(BINARY_NAME)
+	rm $(DIST_DIR)/$(BINARY_NAME)
+	echo "Packaged: $(DIST_DIR)/$(BINARY_NAME)-$(CARGO_VERSION)-$(TARGET).tar.gz"
+
+package-windows-x64: $(DIST_DIR)
+	$(eval TARGET := x86_64-pc-windows-msvc)
+	cp target/$(TARGET)/release/$(BINARY_NAME).exe $(DIST_DIR)/$(BINARY_NAME).exe
+	powershell -Command "Compress-Archive -Path $(DIST_DIR)/$(BINARY_NAME).exe -DestinationPath $(DIST_DIR)/$(BINARY_NAME)-$(CARGO_VERSION)-$(TARGET).zip -Force"
+	rm $(DIST_DIR)/$(BINARY_NAME).exe
+	echo "Packaged: $(DIST_DIR)/$(BINARY_NAME)-$(CARGO_VERSION)-$(TARGET).zip"
+
+release-linux-x64: build-linux-x64 package-linux-x64
+release-linux-arm64: install-cross build-linux-arm64 package-linux-arm64
+release-macos-x64: build-macos-x64 package-macos-x64
+release-macos-arm64: build-macos-arm64 package-macos-arm64
+release-windows-x64: build-windows-x64 package-windows-x64
+
 .PHONY: prepare-environment install init \
         format format-rust format-yaml \
         lint verify-format \
         test test-debug \
         check-lib ci audit \
         update-version build \
-        publish publish-dry
+        publish publish-dry \
+        install-cross \
+        build-linux-x64 build-linux-arm64 build-macos-x64 build-macos-arm64 build-windows-x64 \
+        package-linux-x64 package-linux-arm64 package-macos-x64 package-macos-arm64 package-windows-x64 \
+        release-linux-x64 release-linux-arm64 release-macos-x64 release-macos-arm64 release-windows-x64
