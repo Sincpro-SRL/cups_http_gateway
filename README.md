@@ -8,27 +8,21 @@ without touching IPP directly.
 
 ## The idea
 
-Think of it like the HTTP adapter pattern for receipt printers (Epson ESC/POS over serial or USB),
-but for network CUPS.
+Most applications need to print but don't want to deal with IPP, CUPS driver quirks, or
+thermal printer protocols. The gateway is a **local agent** that lives close to CUPS
+(same machine or same VLAN) and exposes a simple JSON API. Your application only needs
+HTTP — the gateway handles everything else.
 
-```
-Your App (any language)
-        │
-        │  HTTP / JSON
-        ▼
- cups-http-gateway          ← runs on the same LAN as CUPS (or on the same host)
-        │
-        │  IPP (port 631)
-        ▼
-   CUPS server              ← manages the physical or virtual printers
-        │
-        ▼
-   Printer(s)
+```mermaid
+flowchart LR
+    A["Your App\n(any language)"] -->|"HTTP / JSON"| B["cups-http-gateway\n(local agent)"]
+    B -->|"IPP  ·  port 631"| C["CUPS server"]
+    C --> D["Printer(s)"]
 ```
 
-The gateway acts as a **local agent**: it lives close to CUPS (same machine, same VLAN)
-and speaks IPP natively. Your application only needs to reach the gateway's HTTP port
-and does not need to know anything about IPP.
+The gateway also handles format translation transparently: PNG/JPEG images are
+automatically converted to ESC/POS raster for thermal printers or wrapped in a PDF for
+page-based printers — the client never needs to know which type of printer it is talking to.
 
 ---
 
@@ -77,9 +71,36 @@ GET  /printers/:name/jobs   → list jobs for a printer
 }
 ```
 
-Supported `format` values: `text/plain`, `application/pdf`, `application/octet-stream`
-(or any MIME type your CUPS driver accepts). For binary formats, `content` must be
-base64-encoded.
+Supported `format` values: `text/plain`, `application/pdf`, `image/png`, `image/jpeg`,
+`application/octet-stream` (or any MIME type your CUPS driver accepts).
+For binary formats, `content` must be base64-encoded.
+
+#### Print options
+
+```json
+{
+  "content": "...",
+  "format": "image/png",
+  "job_name": "POS Receipt",
+  "options": {
+    "copies":      1,
+    "media":       "custom_80x297mm",
+    "sides":       "one-sided",
+    "color_mode":  "monochrome",
+    "orientation": "portrait"
+  }
+}
+```
+
+| Option | Values | Notes |
+| --- | --- | --- |
+| `copies` | integer | Number of copies |
+| `media` | CUPS media keyword | `iso_a4`, `na_letter`, `custom_80x297mm`, `custom_58x297mm`, etc. |
+| `sides` | `one-sided`, `two-sided-long-edge`, `two-sided-short-edge` | |
+| `color_mode` | `color`, `monochrome`, `auto` | |
+| `orientation` | `portrait`, `landscape`, `reverse-portrait`, `reverse-landscape` | |
+
+Omitted options fall back to the printer's configured CUPS defaults.
 
 #### Print response
 
@@ -138,6 +159,81 @@ Invoke-RestMethod http://localhost:6631/printers/HP_LaserJet/print `
 # List jobs
 Invoke-RestMethod http://localhost:6631/printers/HP_LaserJet/jobs
 ```
+
+---
+
+## Image printing
+
+When the format is `image/png` or `image/jpeg` the gateway never forwards the raw image
+to CUPS. It inspects the target printer and chooses one of two paths automatically:
+
+```mermaid
+flowchart TD
+    A["POST /printers/{name}/print\nformat: image/png or image/jpeg"]
+    A --> B["Query CUPS capabilities\ncached · TTL 3600 s"]
+    B --> C{"CUPS media_ready or media_default\nmatches custom_NNxMMMmm  ≤ 120 mm?"}
+    C -->|Yes| D["Thermal path"]
+    C -->|No| E["PDF path"]
+    D --> D1["Decode image"]
+    D1 --> D2["Scale to roll printable width\nLanczos3 resampling"]
+    D2 --> D3["Floyd-Steinberg dithering → 1-bit"]
+    D3 --> D4["Pack ESC/POS GS v 0 raster\nMSB-first · 8 px per byte"]
+    D4 --> D5["Send as application/octet-stream"]
+    E --> E1["Decode image → RGB8"]
+    E1 --> E2["Embed in PDF at top-left\nscale to client media hint or native size"]
+    E2 --> E3["IPP: media margins = 0"]
+    E3 --> E4["Send as application/pdf"]
+```
+
+### Thermal path — ESC/POS raster
+
+Activated when CUPS reports a thermal roll as the active media (`media_ready` first,
+`media_default` as fallback).
+
+| CUPS media keyword | Roll width | Printable px (203 DPI) |
+| --- | --- | --- |
+| `custom_80x297mm` | 80 mm | 576 px |
+| `custom_58x297mm` | 58 mm | 384 px |
+| `custom_76x200mm` (example) | 76 mm | ~548 px |
+
+Any `custom_NNxMMMmm` keyword with N ≤ 120 mm is treated as a thermal roll.
+Standard keywords (`na_letter`, `iso_a4`, etc.) always take the PDF path.
+
+The raster conversion:
+
+1. Decodes the PNG/JPEG
+2. Scales to the roll's printable width (Lanczos3)
+3. Converts to 1-bit greyscale with Floyd-Steinberg dithering
+4. Packs into ESC/POS `GS v 0` command (MSB-first, 8 px per byte)
+
+### PDF path — page-based printers
+
+Activated for any printer CUPS does not report as a thermal roll (letter, A4, etc.).
+
+The image is embedded in a PDF sized to the printer's actual media. Scaling uses the
+`media` option the client sent as a hint for the intended physical width:
+
+| Client `media` | Target width in PDF |
+| --- | --- |
+| `custom_80x297mm` | 72 mm (90 % of 80 mm roll) |
+| `custom_58x297mm` | 48 mm (90 % of 58 mm roll) |
+| Any standard size or omitted | Native 96-DPI size (no upscaling) |
+
+The image is always placed at the top-left corner of the page. The IPP job requests
+`media-*-margin = 0` so the content starts from the physical edge of the paper.
+
+### Cases at a glance
+
+| Printer configured in CUPS | Client `media` | Result |
+| --- | --- | --- |
+| `custom_80x297mm` (80 mm thermal) | anything | ESC/POS 576 px |
+| `custom_58x297mm` (58 mm thermal) | anything | ESC/POS 384 px |
+| `na_letter` (letter printer) | `custom_80x297mm` | PDF, image at 72 mm, top-left |
+| `na_letter` (letter printer) | omitted | PDF, image at native size, top-left |
+| `iso_a4` (A4 printer) | omitted | PDF, image at native size, top-left |
+
+> **Thermal printer misconfigured in CUPS as `na_letter`**: the gateway follows what
+> CUPS reports. Fix the CUPS media configuration so the gateway can detect it correctly.
 
 ---
 

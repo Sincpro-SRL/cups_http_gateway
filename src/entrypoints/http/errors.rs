@@ -29,6 +29,7 @@ pub fn into_http_error(e: &CupsError) -> (StatusCode, Json<ErrorResponse>) {
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
         }
         CupsError::Transport(_) => (StatusCode::BAD_GATEWAY, e.to_string()),
+        CupsError::ConversionError(_) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     };
 
     (

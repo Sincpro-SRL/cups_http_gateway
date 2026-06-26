@@ -31,6 +31,9 @@ pub enum CupsError {
         requested: String,
         supported: Vec<String>,
     },
+
+    #[error("image conversion failed: {0}")]
+    ConversionError(String),
 }
 
 #[derive(Clone)]
@@ -272,6 +275,22 @@ impl CupsClient {
                 DelimiterTag::JobAttributes,
                 IppAttribute::new("print-scaling", IppValue::Keyword("none".to_owned())),
             );
+        }
+
+        // Request zero margins for PDF jobs so the content starts from the top-left
+        // of the physical paper rather than after the printer's default margin offset.
+        if matches!(format, DocumentFormat::Pdf) {
+            for attr in [
+                "media-top-margin",
+                "media-left-margin",
+                "media-right-margin",
+                "media-bottom-margin",
+            ] {
+                req.attributes_mut().add(
+                    DelimiterTag::JobAttributes,
+                    IppAttribute::new(attr, IppValue::Integer(0)),
+                );
+            }
         }
 
         let client = AsyncIppClient::new(uri);

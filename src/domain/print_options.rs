@@ -37,11 +37,6 @@ impl DocumentFormat {
     pub fn is_text(&self) -> bool {
         matches!(self, Self::PlainText)
     }
-
-    /// Whether this is a raw byte stream (ESC/POS, ZPL, etc.).
-    pub fn is_raw(&self) -> bool {
-        matches!(self, Self::Raw(_))
-    }
 }
 
 /// Duplex / sides selection.
@@ -203,10 +198,14 @@ impl MediaSize {
 }
 
 /// `custom_NNxMMMmm` → printable pixels at 203 DPI (10% margin reduction, ~5% each side).
+/// Returns `None` for widths > 120mm (label printers, not receipt rolls).
 fn parse_thermal_width_px(keyword: &str) -> Option<u32> {
     let inner = keyword.strip_prefix("custom_")?;
     let width_str = inner.split('x').next()?;
     let width_mm: f32 = width_str.parse().ok()?;
+    if width_mm > 120.0 {
+        return None;
+    }
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     Some((width_mm * 0.9 / 25.4 * 203.0).round() as u32)
 }
