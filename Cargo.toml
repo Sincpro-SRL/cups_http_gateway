@@ -1,6 +1,6 @@
 [package]
 name = "cups-http-gateway"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 description = "HTTP gateway between REST clients and a CUPS print server"
 license = "MIT"
