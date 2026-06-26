@@ -188,42 +188,32 @@ impl MediaSize {
             other => Self::Custom(other.to_owned()),
         }
     }
-}
 
-/// ESC/POS cutter command appended to the payload for thermal receipt printers.
-///
-/// Only applies when `format` is `Raw` / `application/octet-stream` (ESC/POS stream).
-/// The bytes are appended by the service layer before the job is sent to CUPS.
-#[derive(Debug, Clone, Default)]
-pub enum CutMode {
-    /// Full cut — severs the paper completely. ESC/POS: `GS V 0` (`0x1D 0x56 0x00`).
-    #[default]
-    Full,
-    /// Partial cut — leaves a thin strip attached. ESC/POS: `GS V 1` (`0x1D 0x56 0x01`).
-    Partial,
-}
-
-impl CutMode {
-    /// Returns the ESC/POS byte sequence for this cut mode.
-    pub fn as_escpos_bytes(&self) -> &'static [u8] {
+    /// Printable width in pixels at 203 DPI, or `None` for standard paper sizes.
+    pub fn thermal_print_width_px(&self) -> Option<u32> {
         match self {
-            Self::Full => &[0x1D, 0x56, 0x00],
-            Self::Partial => &[0x1D, 0x56, 0x01],
-        }
-    }
-
-    pub fn from_keyword(s: &str) -> Option<Self> {
-        match s {
-            "full" => Some(Self::Full),
-            "partial" => Some(Self::Partial),
+            // 80mm roll: 72mm printable area (4mm margins each side) × 203 DPI = 576px
+            Self::ThermalReceipt80mm => Some(576),
+            // 58mm roll: 48mm printable area × 203 DPI = 384px
+            Self::ThermalReceipt58mm => Some(384),
+            Self::Custom(kw) => parse_thermal_width_px(kw),
             _ => None,
         }
     }
 }
 
-/// IPP job attributes forwarded to CUPS with each print job.
-///
-/// All fields are optional — omitted fields use the printer's configured defaults.
+/// `custom_NNxMMMmm` → printable pixels at 203 DPI (10% margin reduction, ~5% each side).
+fn parse_thermal_width_px(keyword: &str) -> Option<u32> {
+    let inner = keyword.strip_prefix("custom_")?;
+    let width_str = inner.split('x').next()?;
+    let width_mm: f32 = width_str.parse().ok()?;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    Some((width_mm * 0.9 / 25.4 * 203.0).round() as u32)
+}
+
+/// IPP job attributes the caller can set per request.
+/// All fields are optional — omitted fields use the printer's configured CUPS defaults.
+/// The gateway automatically handles thermal detection, image scaling, and dithering.
 #[derive(Debug, Clone, Default)]
 pub struct PrintJobOptions {
     pub copies: Option<u32>,
@@ -231,11 +221,4 @@ pub struct PrintJobOptions {
     pub sides: Option<Sides>,
     pub color_mode: Option<ColorMode>,
     pub orientation: Option<Orientation>,
-    /// Append an ESC/POS cut command at the end of the payload.
-    /// Only effective for raw ESC/POS streams (`application/octet-stream`).
-    pub cut: Option<CutMode>,
-    /// When `true` the service queries the printer capabilities before sending
-    /// and automatically falls back to printer defaults for unsupported options.
-    /// An unsupported `format` is always an error (the content cannot be transcoded).
-    pub smart: bool,
 }

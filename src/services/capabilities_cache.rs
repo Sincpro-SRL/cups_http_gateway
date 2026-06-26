@@ -10,10 +10,7 @@ struct Entry {
     cached_at: Instant,
 }
 
-/// In-memory TTL cache for printer capabilities.
-///
-/// Avoids querying CUPS on every `smart` print job. The cache is shared across
-/// all requests via `Arc` and is safe for concurrent reads.
+/// In-memory TTL cache for printer capabilities. Shared via `Arc`; concurrent-read safe.
 pub struct CapabilitiesCache {
     store: RwLock<HashMap<String, Entry>>,
     ttl: Duration,
@@ -27,7 +24,6 @@ impl CapabilitiesCache {
         }
     }
 
-    /// Returns cached capabilities if they are still within the TTL.
     pub async fn get(&self, printer: &str) -> Option<PrinterCapabilities> {
         let store = self.store.read().await;
         store.get(printer).and_then(|e| {
@@ -39,7 +35,6 @@ impl CapabilitiesCache {
         })
     }
 
-    /// Stores capabilities for a printer, replacing any previous entry.
     pub async fn set(&self, printer: &str, caps: PrinterCapabilities) {
         let mut store = self.store.write().await;
         store.insert(
@@ -51,7 +46,6 @@ impl CapabilitiesCache {
         );
     }
 
-    /// Removes a single printer from the cache (force refresh on next request).
     pub async fn invalidate(&self, printer: &str) {
         self.store.write().await.remove(printer);
     }

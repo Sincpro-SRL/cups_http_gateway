@@ -2,13 +2,13 @@ use serde::{Deserialize, Serialize};
 
 // ── HTTP Request bodies ───────────────────────────────────────────────────────
 
-/// Job attributes the caller can set per-request. All fields are optional;
-/// omitted fields fall back to the printer's configured CUPS defaults.
+/// Job attributes the caller can set per request. All fields are optional.
+/// Thermal detection, image scaling, and dithering are handled automatically
+/// by the gateway — clients never need to know about ESC/POS or DPI.
 #[derive(Debug, Deserialize, Default)]
 pub struct HttpPrintOptions {
-    /// Number of copies (e.g. 3).
     pub copies: Option<u32>,
-    /// CUPS media keyword: `iso_a4`, `na_letter`, `custom_80x297mm`, etc.
+    /// CUPS media keyword: `"iso_a4"`, `"na_letter"`, `"custom_80x297mm"`, etc.
     pub media: Option<String>,
     /// `"one-sided"` | `"two-sided-long-edge"` | `"two-sided-short-edge"`
     pub sides: Option<String>,
@@ -16,14 +16,6 @@ pub struct HttpPrintOptions {
     pub color_mode: Option<String>,
     /// `"portrait"` | `"landscape"` | `"reverse-portrait"` | `"reverse-landscape"`
     pub orientation: Option<String>,
-    /// Append an ESC/POS cut command after the payload. `"full"` (default) or `"partial"`.
-    /// Only applies to raw ESC/POS streams (`application/octet-stream`).
-    pub cut: Option<String>,
-    /// When `true`, query the printer capabilities first and automatically fall back
-    /// to printer defaults for any unsupported option (media, sides, color mode).
-    /// An unsupported format is always an error regardless of this flag.
-    #[serde(default)]
-    pub smart: bool,
 }
 
 #[derive(Debug, Deserialize)]

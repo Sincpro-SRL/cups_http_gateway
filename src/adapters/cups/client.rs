@@ -6,8 +6,6 @@ use crate::domain::job::JobDetail;
 use crate::domain::print_options::{DocumentFormat, PrintJobOptions};
 use crate::domain::printer::{PrinterCapabilities, PrinterInfo};
 
-// ── Error type ────────────────────────────────────────────────────────────────
-
 #[derive(Debug, Error)]
 pub enum CupsError {
     #[error("IPP transport error: {0}")]
@@ -35,8 +33,6 @@ pub enum CupsError {
     },
 }
 
-// ── Client ────────────────────────────────────────────────────────────────────
-
 #[derive(Clone)]
 pub struct CupsClient {
     host: String,
@@ -51,7 +47,7 @@ impl CupsClient {
         }
     }
 
-    // The ipp crate sends IPP over plain HTTP — URI scheme must be http://
+    // The ipp crate requires http:// — it speaks IPP-over-HTTP, not HTTPS.
     fn printer_uri(&self, printer: &str) -> Result<Uri, CupsError> {
         format!("http://{}:{}/printers/{}", self.host, self.port, printer)
             .parse()
@@ -63,8 +59,6 @@ impl CupsClient {
             .parse()
             .map_err(|e| CupsError::InvalidUri(format!("{e}")))
     }
-
-    // ── Public interface ──────────────────────────────────────────────────────
 
     pub async fn get_printers(&self) -> Result<Vec<String>, CupsError> {
         let uri = self.root_uri()?;
@@ -130,7 +124,7 @@ impl CupsClient {
             let attrs = group.attributes();
 
             if let Some(a) = attrs.get("printer-make-and-model") {
-                caps.make_and_model = ipp_text(a.value());
+                caps.make_and_model = ipp_keyword(a.value());
             }
             if let Some(a) = attrs.get("printer-state") {
                 caps.state = printer_state_str(a.value());
@@ -212,8 +206,8 @@ impl CupsClient {
         let uri = self.printer_uri(printer)?;
         let payload = IppPayload::new(std::io::Cursor::new(data));
 
-        // Build the PrintJob and convert to a raw request so we can inject
-        // document-format into the correct group (OperationAttributes).
+        // Convert to a raw request so we can inject document-format into
+        // OperationAttributes — the high-level PrintJob builder doesn't expose it.
         let op = PrintJob::new(uri.clone(), payload, None::<&str>, job_name);
         let mut req = op.into_ipp_request();
         req.attributes_mut().add(
@@ -224,7 +218,6 @@ impl CupsClient {
             ),
         );
 
-        // ── Job attributes from options ───────────────────────────────────────
         if let Some(copies) = options.copies {
             req.attributes_mut().add(
                 DelimiterTag::JobAttributes,
@@ -271,6 +264,16 @@ impl CupsClient {
             );
         }
 
+        // For images sent to page-based printers, prevent CUPS from centering the
+        // image in the middle of the sheet. `print-scaling=none` prints at native
+        // size starting from the top-left origin of the printable area.
+        if matches!(format, DocumentFormat::Jpeg | DocumentFormat::Png) {
+            req.attributes_mut().add(
+                DelimiterTag::JobAttributes,
+                IppAttribute::new("print-scaling", IppValue::Keyword("none".to_owned())),
+            );
+        }
+
         let client = AsyncIppClient::new(uri);
         let resp = client.send(req).await?;
 
@@ -293,7 +296,7 @@ impl CupsClient {
     pub async fn get_jobs(&self, printer: &str) -> Result<Vec<JobDetail>, CupsError> {
         let uri = self.printer_uri(printer)?;
 
-        // GetJobs has no high-level builder in ipp v4 — build the request directly.
+        // No high-level GetJobs builder in ipp v4 — construct the IPP request manually.
         let mut req =
             IppRequestResponse::new(IppVersion::v1_1(), Operation::GetJobs, Some(uri.clone()));
         req.attributes_mut().add(
@@ -356,8 +359,6 @@ impl CupsClient {
     }
 }
 
-// ── Private helpers ───────────────────────────────────────────────────────────
-
 fn assert_success(resp: &IppRequestResponse) -> Result<(), CupsError> {
     let code = resp.header().status_code();
     if code.is_success() {
@@ -366,8 +367,6 @@ fn assert_success(resp: &IppRequestResponse) -> Result<(), CupsError> {
         Err(CupsError::IppStatus(format!("{code:?}")))
     }
 }
-
-// ── Value helpers ─────────────────────────────────────────────────────────────
 
 fn printer_state_str(value: &IppValue) -> String {
     match value {
@@ -395,10 +394,6 @@ fn ipp_keyword(value: &IppValue) -> String {
         | IppValue::TextWithoutLanguage(s) => s.clone(),
         other => format!("{other:?}"),
     }
-}
-
-fn ipp_text(value: &IppValue) -> String {
-    ipp_keyword(value)
 }
 
 fn job_state_str(value: &IppValue) -> String {

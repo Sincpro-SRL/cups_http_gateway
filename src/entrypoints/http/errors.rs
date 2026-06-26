@@ -41,9 +41,7 @@ pub fn into_http_error(e: &CupsError) -> (StatusCode, Json<ErrorResponse>) {
     )
 }
 
-/// IPP status codes that start with `ClientError` are the printer rejecting the
-/// job parameters — map them to 400 with a human-readable message.
-/// Everything else is a server/gateway fault → 502.
+/// `ClientError` IPP codes → 400; everything else → 502.
 fn ipp_status_to_http(raw: &str) -> (StatusCode, String) {
     if raw.contains("DocumentFormatNotSupported") {
         return (

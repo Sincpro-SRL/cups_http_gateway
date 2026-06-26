@@ -35,11 +35,10 @@ http-server = [
 ipp        = { version = "4", features = ["async-client"] }
 tokio      = { version = "1", features = ["full"] }
 serde      = { version = "1", features = ["derive"] }
-serde_json = "1"
 thiserror  = "1"
 base64     = "0.22"
-http       = "1"
 tracing    = "0.1"
+image      = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
 # ── HTTP server dependencies (optional, gated by http-server feature) ─────────
 axum           = { version = "0.7", optional = true }
