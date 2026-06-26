@@ -41,7 +41,11 @@ pub fn to_escpos_raster(data: &[u8], width_px: u32) -> Vec<u8> {
     let bytes_per_line = w.div_ceil(8);
     let raster = pack_bits(&bits, w, h, bytes_per_line);
 
-    let mut out = Vec::with_capacity(8 + raster.len());
+    // 2 (ESC @) + 8 (GS v 0 header) + raster + 3 (LF feed) + 4 (GS V cut)
+    let mut out = Vec::with_capacity(2 + 8 + raster.len() + 3 + 4);
+
+    // ESC @ — reset printer to factory defaults, clear any leftover state
+    out.extend_from_slice(&[0x1B, 0x40]);
 
     // GS v 0: [0x1D, 0x76, 0x30, m=0 (normal/203 DPI), xL, xH, yL, yH, ...data]
     out.extend_from_slice(&[
@@ -56,12 +60,18 @@ pub fn to_escpos_raster(data: &[u8], width_px: u32) -> Vec<u8> {
     ]);
     out.extend_from_slice(&raster);
 
+    // LF × 3 — advance paper past the cutter (~11 mm at default 3.75 mm/line)
+    out.extend_from_slice(&[0x0A, 0x0A, 0x0A]);
+
+    // GS V 65 0 — feed 0 extra dots then full cut
+    out.extend_from_slice(&[0x1D, 0x56, 0x41, 0x00]);
+
     info!(
         bytes = out.len(),
         width_px = w,
         height_px = h,
         bytes_per_line,
-        "raster: ESC/POS GS v 0 image ready"
+        "raster: ESC/POS job ready (init + GS v 0 + feed + cut)"
     );
     out
 }
