@@ -6,8 +6,6 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use cups_http_gateway::entrypoints::http::{build_router, AppState};
 
-// ── CLI ───────────────────────────────────────────────────────────────────────
-
 #[derive(Parser, Debug)]
 #[command(name = "cups-http-gateway", version, about = "HTTP gateway for CUPS")]
 struct Args {
@@ -31,8 +29,6 @@ struct Args {
     #[arg(long, default_value_t = 3600)]
     caps_cache_ttl: u64,
 }
-
-// ── Entry point ───────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() {

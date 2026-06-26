@@ -9,6 +9,7 @@ use crate::domain::job::JobDetail;
 use crate::domain::print_options::{ColorMode, DocumentFormat, MediaSize, PrintJobOptions, Sides};
 use crate::domain::printer::{PrinterCapabilities, PrinterInfo};
 use crate::services::capabilities_cache::CapabilitiesCache;
+use crate::services::escpos_raster;
 
 /// Stateless service layer: validates input, delegates to the CUPS adapter.
 /// Does not depend on any HTTP primitives — can be used by any transport layer.
@@ -58,23 +59,50 @@ impl PrinterService {
         Ok(info)
     }
 
-    /// Submit a print job.
-    ///
-    /// `data` is raw bytes. Callers are responsible for encoding/decoding
-    /// (e.g. base64 decode at the HTTP layer before calling this).
-    /// When `options.smart` is true, capabilities are queried (from cache when
-    /// available) and unsupported options fall back to printer defaults automatically.
     pub async fn submit_job(
         &self,
         printer: &str,
         mut data: Vec<u8>,
-        format: DocumentFormat,
+        mut format: DocumentFormat,
         job_name: Option<&str>,
         mut options: PrintJobOptions,
     ) -> Result<i32, CupsError> {
-        if options.smart {
-            let caps = self.printer_capabilities(printer).await?;
-            resolve_options(&format, &mut options, &caps, printer)?;
+        let caps = self.printer_capabilities(printer).await?;
+
+        // Hard error: we cannot transcode content, so reject unsupported formats up front.
+        let mime = format.mime_type();
+        if !caps.formats_supported.is_empty()
+            && !caps.formats_supported.iter().any(|f| f == mime)
+            // application/octet-stream is universally accepted for raw streams
+            && mime != "application/octet-stream"
+        {
+            return Err(CupsError::FormatNotSupported {
+                requested: mime.to_owned(),
+                supported: caps.formats_supported.clone(),
+            });
+        }
+
+        resolve_options(&mut options, &caps, printer);
+
+        if matches!(format, DocumentFormat::Jpeg | DocumentFormat::Png) {
+            // Thermal detection: check CUPS caps first, then fall back to the
+            // requested media — the printer may be misconfigured in CUPS (e.g. letter
+            // as default) even though it is physically a thermal roll printer.
+            let target_px = thermal_width_px(&caps).or_else(|| {
+                options
+                    .media
+                    .as_ref()
+                    .and_then(MediaSize::thermal_print_width_px)
+            });
+
+            if let Some(target_px) = target_px {
+                debug!(
+                    printer = printer,
+                    target_px, "thermal path — converting image to ESC/POS raster"
+                );
+                data = escpos_raster::to_escpos_raster(&data, target_px);
+                format = DocumentFormat::Raw("application/octet-stream".to_owned());
+            }
         }
 
         info!(
@@ -84,22 +112,8 @@ impl PrinterService {
             job_name = job_name.unwrap_or("(none)"),
             copies = ?options.copies,
             media = ?options.media.as_ref().map(MediaSize::as_cups_keyword),
-            smart = options.smart,
             "submitting print job"
         );
-
-        if let Some(cut) = &options.cut {
-            if format.is_raw() {
-                debug!(printer = printer, "appending ESC/POS cut bytes");
-                data.extend_from_slice(cut.as_escpos_bytes());
-            } else {
-                warn!(
-                    printer = printer,
-                    format = format.mime_type(),
-                    "cut requested but format is not raw — ignoring"
-                );
-            }
-        }
 
         let job_id = self
             .cups
@@ -117,30 +131,62 @@ impl PrinterService {
     }
 }
 
-// ── Smart option resolution ───────────────────────────────────────────────────
+// ── Thermal detection ─────────────────────────────────────────────────────────
 
-/// Validates and adjusts `options` against the printer's declared capabilities.
+// 203 DPI is the standard resolution for thermal receipt printers (ESC/POS spec).
+const THERMAL_DPI: u32 = 203;
+
+/// Returns the printable width in pixels for thermal printers, or `None` for
+/// standard page-based printers.
 ///
-/// - Format not supported → hard error with the supported list.
-/// - Option specified but not supported → falls back to the printer's CUPS default.
-/// - Option not specified → filled in from the printer's CUPS default.
-fn resolve_options(
-    format: &DocumentFormat,
-    options: &mut PrintJobOptions,
-    caps: &PrinterCapabilities,
-    printer: &str,
-) -> Result<(), CupsError> {
-    // ── Format (hard error — we cannot transcode) ─────────────────────────────
-    let mime = format.mime_type();
-    if !caps.formats_supported.is_empty() && !caps.formats_supported.iter().any(|f| f == mime) {
-        return Err(CupsError::FormatNotSupported {
-            requested: mime.to_owned(),
-            supported: caps.formats_supported.clone(),
-        });
-    }
+/// Thermal detection: `media_default` (or any `media_ready` entry) that matches
+/// the `custom_NNxMMMmm` pattern with width ≤ 120mm is treated as a thermal roll.
+/// This covers 58mm, 76mm, 80mm, and similar receipt sizes.
+fn thermal_width_px(caps: &PrinterCapabilities) -> Option<u32> {
+    let width_mm = detect_thermal_media(caps)?;
+    // Printable area = 90% of total roll width (standard 5% margins each side).
+    // u32→f64 is lossless; f64→u32 is bounded by paper widths so safe.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    Some((f64::from(width_mm) * 0.9 / 25.4 * f64::from(THERMAL_DPI)).round() as u32)
+}
 
-    // ── Media ─────────────────────────────────────────────────────────────────
-    options.media = resolve_keyword_option(
+/// Returns the roll width in mm if the printer's active media is a thermal receipt
+/// roll, or `None` if it looks like a standard page-based printer.
+fn detect_thermal_media(caps: &PrinterCapabilities) -> Option<u32> {
+    // media_ready = physically loaded; fall back to media_default if empty.
+    let candidates = caps
+        .media_ready
+        .iter()
+        .chain(std::iter::once(&caps.media_default));
+
+    for kw in candidates {
+        if let Some(mm) = parse_roll_width_mm(kw) {
+            return Some(mm);
+        }
+    }
+    None
+}
+
+/// Parses `custom_NNxMMMmm` → roll width in mm, only for widths ≤ 120mm
+/// (anything wider is likely a label printer or cut-sheet, not a receipt roll).
+fn parse_roll_width_mm(keyword: &str) -> Option<u32> {
+    let inner = keyword.strip_prefix("custom_")?;
+    let width_str = inner.split('x').next()?;
+    let width_mm: u32 = width_str.parse().ok()?;
+    if width_mm <= 120 {
+        Some(width_mm)
+    } else {
+        None
+    }
+}
+
+// ── Option resolution ─────────────────────────────────────────────────────────
+
+/// Fills unspecified options from the printer's CUPS defaults.
+/// If the client specified a value not in the supported list, logs a warning
+/// and falls back to the printer default (never errors — CUPS decides).
+fn resolve_options(options: &mut PrintJobOptions, caps: &PrinterCapabilities, printer: &str) {
+    options.media = resolve_keyword(
         options.media.as_ref().map(MediaSize::as_cups_keyword),
         &caps.media_supported,
         &caps.media_default,
@@ -149,8 +195,7 @@ fn resolve_options(
     )
     .map(|kw| MediaSize::from_keyword(&kw));
 
-    // ── Sides ─────────────────────────────────────────────────────────────────
-    options.sides = resolve_keyword_option(
+    options.sides = resolve_keyword(
         options.sides.as_ref().map(Sides::as_ipp_keyword),
         &caps.sides_supported,
         &caps.sides_default,
@@ -159,8 +204,7 @@ fn resolve_options(
     )
     .and_then(|kw| Sides::from_keyword(&kw));
 
-    // ── Color mode ────────────────────────────────────────────────────────────
-    options.color_mode = resolve_keyword_option(
+    options.color_mode = resolve_keyword(
         options.color_mode.as_ref().map(ColorMode::as_ipp_keyword),
         &caps.color_modes_supported,
         &caps.color_mode_default,
@@ -168,53 +212,36 @@ fn resolve_options(
         "color_mode",
     )
     .and_then(|kw| ColorMode::from_keyword(&kw));
-
-    Ok(())
 }
 
-/// Resolves a single option keyword against the printer's supported list.
-///
-/// - `requested` is `Some(keyword)` when the caller specified a value.
-/// - If not specified → use `default_keyword` from CUPS.
-/// - If specified but not supported → fall back to `default_keyword` with a warning.
-/// - Returns `None` if both the requested and the default are unsupported or empty.
-fn resolve_keyword_option(
+fn resolve_keyword(
     requested: Option<&str>,
     supported: &[String],
-    default_keyword: &str,
+    default_kw: &str,
     printer: &str,
     field: &str,
 ) -> Option<String> {
     let candidate = match requested {
+        Some(kw) if supported.is_empty() || supported.iter().any(|s| s == kw) => {
+            return Some(kw.to_owned());
+        }
         Some(kw) => {
-            if supported.is_empty() || supported.iter().any(|s| s == kw) {
-                return Some(kw.to_owned());
-            }
             warn!(
-                printer = printer,
-                field = field,
+                printer,
+                field,
                 requested = kw,
-                fallback = default_keyword,
-                "option not supported — falling back to printer default"
+                fallback = default_kw,
+                "option not supported — using printer default"
             );
-            default_keyword
+            default_kw
         }
-        None => {
-            // Not specified — apply the printer's configured default explicitly.
-            default_keyword
-        }
+        None => default_kw,
     };
 
     if candidate.is_empty() {
         return None;
     }
     if supported.is_empty() || supported.iter().any(|s| s == candidate) {
-        debug!(
-            printer = printer,
-            field = field,
-            value = candidate,
-            "applying printer default"
-        );
         Some(candidate.to_owned())
     } else {
         None

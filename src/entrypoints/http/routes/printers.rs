@@ -7,7 +7,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 
 use crate::adapters::cups::client::CupsError;
 use crate::domain::print_options::{
-    ColorMode, CutMode, DocumentFormat, MediaSize, Orientation, PrintJobOptions, Sides,
+    ColorMode, DocumentFormat, MediaSize, Orientation, PrintJobOptions, Sides,
 };
 use crate::entrypoints::http::app_state::AppState;
 use crate::entrypoints::http::errors::into_http_error;
@@ -127,7 +127,5 @@ fn map_options(http: &HttpPrintOptions) -> PrintJobOptions {
             .orientation
             .as_deref()
             .and_then(Orientation::from_keyword),
-        cut: http.cut.as_deref().and_then(CutMode::from_keyword),
-        smart: http.smart,
     }
 }
