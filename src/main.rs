@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use clap::Parser;
 use tracing::info;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -23,6 +25,11 @@ struct Args {
 
     #[arg(long, default_value = "info")]
     log_level: String,
+
+    /// How long to cache printer capabilities before re-querying CUPS (seconds).
+    /// Set to 0 to disable caching.
+    #[arg(long, default_value_t = 3600)]
+    caps_cache_ttl: u64,
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -36,7 +43,8 @@ async fn main() {
         .with(EnvFilter::new(&args.log_level))
         .init();
 
-    let state = AppState::new(&args.cups_host, args.cups_port);
+    let caps_ttl = Duration::from_secs(args.caps_cache_ttl);
+    let state = AppState::new(&args.cups_host, args.cups_port, caps_ttl);
     let router = build_router(state);
 
     let addr = format!("{}:{}", args.host, args.port);
@@ -50,8 +58,8 @@ async fn main() {
         addr
     );
     info!(
-        "Forwarding to CUPS at {}:{}",
-        args.cups_host, args.cups_port
+        "Forwarding to CUPS at {}:{} (caps cache TTL: {}s)",
+        args.cups_host, args.cups_port, args.caps_cache_ttl
     );
 
     axum::serve(listener, router).await.expect("server error");
