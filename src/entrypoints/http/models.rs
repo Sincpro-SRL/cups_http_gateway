@@ -1,17 +1,33 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 // ── HTTP Request bodies ───────────────────────────────────────────────────────
 
+/// Job attributes the caller can set per-request. All fields are optional;
+/// omitted fields fall back to the printer's configured CUPS defaults.
+#[derive(Debug, Deserialize, Default)]
+pub struct HttpPrintOptions {
+    /// Number of copies (e.g. 3).
+    pub copies: Option<u32>,
+    /// CUPS media keyword: `iso_a4`, `na_letter`, `custom_80x297mm`, etc.
+    pub media: Option<String>,
+    /// `"one-sided"` | `"two-sided-long-edge"` | `"two-sided-short-edge"`
+    pub sides: Option<String>,
+    /// `"color"` | `"monochrome"` | `"auto"`
+    pub color_mode: Option<String>,
+    /// `"portrait"` | `"landscape"` | `"reverse-portrait"` | `"reverse-landscape"`
+    pub orientation: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct PrintRequest {
-    /// Plain text or base64-encoded bytes depending on `format`.
+    /// Plain UTF-8 text for `text/plain`; base64-encoded bytes for all other formats.
     pub content: String,
-    /// MIME type: text/plain | application/pdf | application/octet-stream
+    /// MIME type: `text/plain`, `application/pdf`, `image/png`, `image/jpeg`,
+    /// `application/postscript`, or any custom type (e.g. `application/octet-stream`
+    /// for raw ESC/POS or ZPL).
     pub format: String,
     pub job_name: Option<String>,
-    #[allow(dead_code)]
-    pub options: Option<HashMap<String, serde_json::Value>>,
+    pub options: Option<HttpPrintOptions>,
 }
 
 // ── HTTP Response bodies ──────────────────────────────────────────────────────

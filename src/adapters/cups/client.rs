@@ -3,6 +3,7 @@ use ipp::prelude::*;
 use thiserror::Error;
 
 use crate::domain::job::JobDetail;
+use crate::domain::print_options::{DocumentFormat, PrintJobOptions};
 use crate::domain::printer::PrinterInfo;
 
 // ── Error type ────────────────────────────────────────────────────────────────
@@ -115,8 +116,9 @@ impl CupsClient {
         &self,
         printer: &str,
         data: Vec<u8>,
-        mime_type: &str,
+        format: &DocumentFormat,
         job_name: Option<&str>,
+        options: &PrintJobOptions,
     ) -> Result<i32, CupsError> {
         let uri = self.printer_uri(printer)?;
         let payload = IppPayload::new(std::io::Cursor::new(data));
@@ -129,9 +131,56 @@ impl CupsClient {
             DelimiterTag::OperationAttributes,
             IppAttribute::new(
                 "document-format",
-                IppValue::MimeMediaType(mime_type.to_owned()),
+                IppValue::MimeMediaType(format.mime_type().to_owned()),
             ),
         );
+
+        // ── Job attributes from options ───────────────────────────────────────
+        if let Some(copies) = options.copies {
+            req.attributes_mut().add(
+                DelimiterTag::JobAttributes,
+                IppAttribute::new(
+                    "copies",
+                    IppValue::Integer(i32::try_from(copies).unwrap_or(i32::MAX)),
+                ),
+            );
+        }
+        if let Some(media) = &options.media {
+            req.attributes_mut().add(
+                DelimiterTag::JobAttributes,
+                IppAttribute::new(
+                    "media",
+                    IppValue::Keyword(media.as_cups_keyword().to_owned()),
+                ),
+            );
+        }
+        if let Some(sides) = &options.sides {
+            req.attributes_mut().add(
+                DelimiterTag::JobAttributes,
+                IppAttribute::new(
+                    "sides",
+                    IppValue::Keyword(sides.as_ipp_keyword().to_owned()),
+                ),
+            );
+        }
+        if let Some(color_mode) = &options.color_mode {
+            req.attributes_mut().add(
+                DelimiterTag::JobAttributes,
+                IppAttribute::new(
+                    "print-color-mode",
+                    IppValue::Keyword(color_mode.as_ipp_keyword().to_owned()),
+                ),
+            );
+        }
+        if let Some(orientation) = &options.orientation {
+            req.attributes_mut().add(
+                DelimiterTag::JobAttributes,
+                IppAttribute::new(
+                    "orientation-requested",
+                    IppValue::Enum(orientation.as_ipp_enum()),
+                ),
+            );
+        }
 
         let client = AsyncIppClient::new(uri);
         let resp = client.send(req).await?;
