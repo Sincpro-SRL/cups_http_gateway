@@ -7,10 +7,8 @@ use serde::{Deserialize, Serialize};
 /// by the gateway — clients never need to know about ESC/POS or DPI.
 #[derive(Debug, Deserialize, Default)]
 pub struct HttpPrintOptions {
-    /// Number of copies (e.g. `2`).
     pub copies: Option<u32>,
     /// CUPS media keyword: `"iso_a4"`, `"na_letter"`, `"custom_80x297mm"`, etc.
-    /// When omitted the printer's configured default is used.
     pub media: Option<String>,
     /// `"one-sided"` | `"two-sided-long-edge"` | `"two-sided-short-edge"`
     pub sides: Option<String>,
