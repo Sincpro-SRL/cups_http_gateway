@@ -52,7 +52,7 @@ lint:
 
 verify-format:
 	echo "Checking format compliance..."
-	cargo fmt --all -- --check
+	make format
 	make lint
 
 # ── Testing ───────────────────────────────────────────────────────────────────
@@ -87,6 +87,10 @@ update-version:
 ifndef VERSION
 	$(error VERSION is required. Usage: make update-version VERSION=1.2.3)
 endif
+	@if ! cargo set-version --help > /dev/null 2>&1; then \
+		echo "Installing cargo-edit..."; \
+		cargo install cargo-edit --locked; \
+	fi
 	@echo "Updating Cargo.toml version to $(VERSION)..."
 	cargo set-version $(VERSION)
 	@echo "Version updated successfully"
