@@ -9,7 +9,7 @@ use crate::domain::job::JobDetail;
 use crate::domain::print_options::{ColorMode, DocumentFormat, MediaSize, PrintJobOptions, Sides};
 use crate::domain::printer::{PrinterCapabilities, PrinterInfo};
 use crate::services::capabilities_cache::CapabilitiesCache;
-use crate::services::escpos_raster;
+use crate::services::{escpos_raster, image_to_pdf};
 
 /// Stateless service layer: validates input, delegates to the CUPS adapter.
 /// Does not depend on any HTTP primitives — can be used by any transport layer.
@@ -69,40 +69,44 @@ impl PrinterService {
     ) -> Result<i32, CupsError> {
         let caps = self.printer_capabilities(printer).await?;
 
-        // Hard error: we cannot transcode content, so reject unsupported formats up front.
+        // Preserve client intent before resolve_options overwrites it.
+        // Used to derive the target print width for PDF wrapping.
+        let client_target_w_mm = options.media.as_ref().and_then(target_width_mm);
+
+        resolve_options(&mut options, &caps, printer);
+
+        if matches!(format, DocumentFormat::Jpeg | DocumentFormat::Png) {
+            // Thermal detection via CUPS caps only. If CUPS reports na_letter or
+            // any non-thermal media, the printer is treated as page-based regardless
+            // of what the client requested.
+            let target_px = thermal_width_px(&caps);
+
+            if let Some(target_px) = target_px {
+                debug!(
+                    printer,
+                    target_px, "thermal path — converting image to ESC/POS raster"
+                );
+                data = escpos_raster::to_escpos_raster(&data, target_px);
+                format = DocumentFormat::Raw("application/octet-stream".to_owned());
+            } else {
+                debug!(printer, target_w_mm = ?client_target_w_mm, "non-thermal path — wrapping image in PDF");
+                data = image_to_pdf::to_pdf(&data, options.media.as_ref(), client_target_w_mm)
+                    .map_err(CupsError::ConversionError)?;
+                format = DocumentFormat::Pdf;
+            }
+        }
+
+        // Format check: images are always transcoded above, so only check non-image formats.
+        // application/octet-stream is universally accepted for raw streams.
         let mime = format.mime_type();
         if !caps.formats_supported.is_empty()
             && !caps.formats_supported.iter().any(|f| f == mime)
-            // application/octet-stream is universally accepted for raw streams
             && mime != "application/octet-stream"
         {
             return Err(CupsError::FormatNotSupported {
                 requested: mime.to_owned(),
                 supported: caps.formats_supported.clone(),
             });
-        }
-
-        resolve_options(&mut options, &caps, printer);
-
-        if matches!(format, DocumentFormat::Jpeg | DocumentFormat::Png) {
-            // Thermal detection: check CUPS caps first, then fall back to the
-            // requested media — the printer may be misconfigured in CUPS (e.g. letter
-            // as default) even though it is physically a thermal roll printer.
-            let target_px = thermal_width_px(&caps).or_else(|| {
-                options
-                    .media
-                    .as_ref()
-                    .and_then(MediaSize::thermal_print_width_px)
-            });
-
-            if let Some(target_px) = target_px {
-                debug!(
-                    printer = printer,
-                    target_px, "thermal path — converting image to ESC/POS raster"
-                );
-                data = escpos_raster::to_escpos_raster(&data, target_px);
-                format = DocumentFormat::Raw("application/octet-stream".to_owned());
-            }
         }
 
         info!(
@@ -133,50 +137,33 @@ impl PrinterService {
 
 // ── Thermal detection ─────────────────────────────────────────────────────────
 
-// 203 DPI is the standard resolution for thermal receipt printers (ESC/POS spec).
-const THERMAL_DPI: u32 = 203;
-
-/// Returns the printable width in pixels for thermal printers, or `None` for
-/// standard page-based printers.
-///
-/// Thermal detection: `media_default` (or any `media_ready` entry) that matches
-/// the `custom_NNxMMMmm` pattern with width ≤ 120mm is treated as a thermal roll.
-/// This covers 58mm, 76mm, 80mm, and similar receipt sizes.
+/// Returns the printable width in pixels if the printer's active media is a
+/// thermal receipt roll, or `None` for standard page-based printers.
+/// Checks `media_ready` first (physically loaded), then `media_default`.
 fn thermal_width_px(caps: &PrinterCapabilities) -> Option<u32> {
-    let width_mm = detect_thermal_media(caps)?;
-    // Printable area = 90% of total roll width (standard 5% margins each side).
-    // u32→f64 is lossless; f64→u32 is bounded by paper widths so safe.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    Some((f64::from(width_mm) * 0.9 / 25.4 * f64::from(THERMAL_DPI)).round() as u32)
-}
-
-/// Returns the roll width in mm if the printer's active media is a thermal receipt
-/// roll, or `None` if it looks like a standard page-based printer.
-fn detect_thermal_media(caps: &PrinterCapabilities) -> Option<u32> {
-    // media_ready = physically loaded; fall back to media_default if empty.
-    let candidates = caps
-        .media_ready
+    caps.media_ready
         .iter()
-        .chain(std::iter::once(&caps.media_default));
-
-    for kw in candidates {
-        if let Some(mm) = parse_roll_width_mm(kw) {
-            return Some(mm);
-        }
-    }
-    None
+        .chain(std::iter::once(&caps.media_default))
+        .find_map(|kw| MediaSize::from_keyword(kw).thermal_print_width_px())
 }
 
-/// Parses `custom_NNxMMMmm` → roll width in mm, only for widths ≤ 120mm
-/// (anything wider is likely a label printer or cut-sheet, not a receipt roll).
-fn parse_roll_width_mm(keyword: &str) -> Option<u32> {
-    let inner = keyword.strip_prefix("custom_")?;
-    let width_str = inner.split('x').next()?;
-    let width_mm: u32 = width_str.parse().ok()?;
-    if width_mm <= 120 {
-        Some(width_mm)
-    } else {
-        None
+/// Returns the intended physical print width in mm from the client's media hint,
+/// or `None` for standard page-sized media (let image render at natural size).
+fn target_width_mm(media: &MediaSize) -> Option<f32> {
+    match media {
+        MediaSize::ThermalReceipt80mm => Some(72.0),
+        MediaSize::ThermalReceipt58mm => Some(48.0),
+        MediaSize::Custom(kw) => {
+            let inner = kw.strip_prefix("custom_")?;
+            let width_str = inner.split('x').next()?;
+            let width_mm: f32 = width_str.parse().ok()?;
+            if width_mm <= 120.0 {
+                Some(width_mm * 0.9)
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
