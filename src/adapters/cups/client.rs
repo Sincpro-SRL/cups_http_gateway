@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use crate::domain::job::JobDetail;
 use crate::domain::print_options::{DocumentFormat, PrintJobOptions};
-use crate::domain::printer::PrinterInfo;
+use crate::domain::printer::{PrinterCapabilities, PrinterInfo};
 
 // ── Error type ────────────────────────────────────────────────────────────────
 
@@ -27,6 +27,12 @@ pub enum CupsError {
 
     #[error("Base64 decode error: {0}")]
     Base64(#[from] base64::DecodeError),
+
+    #[error("format '{requested}' not supported; printer accepts: {}", supported.join(", "))]
+    FormatNotSupported {
+        requested: String,
+        supported: Vec<String>,
+    },
 }
 
 // ── Client ────────────────────────────────────────────────────────────────────
@@ -76,6 +82,89 @@ impl CupsClient {
             }
         }
         Ok(names)
+    }
+
+    pub async fn get_printer_capabilities(
+        &self,
+        printer: &str,
+    ) -> Result<PrinterCapabilities, CupsError> {
+        let uri = self.printer_uri(printer)?;
+        let op = IppOperationBuilder::get_printer_attributes(uri.clone())
+            .attributes([
+                "printer-make-and-model",
+                "printer-state",
+                "printer-state-reasons",
+                "document-format-supported",
+                "media-supported",
+                "media-default",
+                "media-ready",
+                "sides-supported",
+                "sides-default",
+                "print-color-mode-supported",
+                "print-color-mode-default",
+            ])
+            .build();
+        let client = AsyncIppClient::new(uri);
+        let resp = client.send(op).await?;
+
+        if resp.header().status_code() == StatusCode::ClientErrorNotFound {
+            return Err(CupsError::PrinterNotFound(printer.to_owned()));
+        }
+        assert_success(&resp)?;
+
+        let mut caps = PrinterCapabilities {
+            make_and_model: String::new(),
+            state: "unknown".to_owned(),
+            state_reasons: Vec::new(),
+            formats_supported: Vec::new(),
+            media_supported: Vec::new(),
+            media_default: String::new(),
+            media_ready: Vec::new(),
+            sides_supported: Vec::new(),
+            sides_default: String::new(),
+            color_modes_supported: Vec::new(),
+            color_mode_default: String::new(),
+        };
+
+        for group in resp.attributes().groups_of(DelimiterTag::PrinterAttributes) {
+            let attrs = group.attributes();
+
+            if let Some(a) = attrs.get("printer-make-and-model") {
+                caps.make_and_model = ipp_text(a.value());
+            }
+            if let Some(a) = attrs.get("printer-state") {
+                caps.state = printer_state_str(a.value());
+            }
+            if let Some(a) = attrs.get("printer-state-reasons") {
+                caps.state_reasons = ipp_keywords(a.value());
+            }
+            if let Some(a) = attrs.get("document-format-supported") {
+                caps.formats_supported = ipp_keywords(a.value());
+            }
+            if let Some(a) = attrs.get("media-supported") {
+                caps.media_supported = ipp_keywords(a.value());
+            }
+            if let Some(a) = attrs.get("media-default") {
+                caps.media_default = ipp_keyword(a.value());
+            }
+            if let Some(a) = attrs.get("media-ready") {
+                caps.media_ready = ipp_keywords(a.value());
+            }
+            if let Some(a) = attrs.get("sides-supported") {
+                caps.sides_supported = ipp_keywords(a.value());
+            }
+            if let Some(a) = attrs.get("sides-default") {
+                caps.sides_default = ipp_keyword(a.value());
+            }
+            if let Some(a) = attrs.get("print-color-mode-supported") {
+                caps.color_modes_supported = ipp_keywords(a.value());
+            }
+            if let Some(a) = attrs.get("print-color-mode-default") {
+                caps.color_mode_default = ipp_keyword(a.value());
+            }
+        }
+
+        Ok(caps)
     }
 
     pub async fn get_printer_info(&self, printer: &str) -> Result<PrinterInfo, CupsError> {
@@ -288,6 +377,28 @@ fn printer_state_str(value: &IppValue) -> String {
         IppValue::Enum(n) => format!("unknown({n})"),
         _ => "unknown".to_owned(),
     }
+}
+
+/// Extract all keyword/text values from a scalar or Array IPP value.
+fn ipp_keywords(value: &IppValue) -> Vec<String> {
+    match value {
+        IppValue::Array(items) => items.iter().map(ipp_keyword).collect(),
+        other => vec![ipp_keyword(other)],
+    }
+}
+
+fn ipp_keyword(value: &IppValue) -> String {
+    match value {
+        IppValue::Keyword(s)
+        | IppValue::MimeMediaType(s)
+        | IppValue::NameWithoutLanguage(s)
+        | IppValue::TextWithoutLanguage(s) => s.clone(),
+        other => format!("{other:?}"),
+    }
+}
+
+fn ipp_text(value: &IppValue) -> String {
+    ipp_keyword(value)
 }
 
 fn job_state_str(value: &IppValue) -> String {

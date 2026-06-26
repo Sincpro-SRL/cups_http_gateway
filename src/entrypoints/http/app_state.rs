@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::adapters::cups::CupsClient;
 use crate::services::PrinterService;
@@ -10,10 +11,10 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(cups_host: &str, cups_port: u16) -> Self {
+    pub fn new(cups_host: &str, cups_port: u16, caps_cache_ttl: Duration) -> Self {
         let client = CupsClient::new(cups_host, cups_port);
         Self {
-            service: Arc::new(PrinterService::new(client)),
+            service: Arc::new(PrinterService::new(client, caps_cache_ttl)),
             cups_addr: format!("{cups_host}:{cups_port}"),
         }
     }

@@ -16,6 +16,14 @@ pub struct HttpPrintOptions {
     pub color_mode: Option<String>,
     /// `"portrait"` | `"landscape"` | `"reverse-portrait"` | `"reverse-landscape"`
     pub orientation: Option<String>,
+    /// Append an ESC/POS cut command after the payload. `"full"` (default) or `"partial"`.
+    /// Only applies to raw ESC/POS streams (`application/octet-stream`).
+    pub cut: Option<String>,
+    /// When `true`, query the printer capabilities first and automatically fall back
+    /// to printer defaults for any unsupported option (media, sides, color mode).
+    /// An unsupported format is always an error regardless of this flag.
+    #[serde(default)]
+    pub smart: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -42,6 +50,28 @@ pub struct StatusResponse {
 #[derive(Debug, Serialize)]
 pub struct PrintersResponse {
     pub printers: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PrinterDefaultsResponse {
+    pub media: String,
+    pub sides: String,
+    pub color_mode: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PrinterCapabilitiesResponse {
+    pub make_and_model: String,
+    pub state: String,
+    pub state_reasons: Vec<String>,
+    pub formats_supported: Vec<String>,
+    pub media_supported: Vec<String>,
+    pub media_default: String,
+    pub media_ready: Vec<String>,
+    pub sides_supported: Vec<String>,
+    pub sides_default: String,
+    pub color_modes_supported: Vec<String>,
+    pub color_mode_default: String,
 }
 
 #[derive(Debug, Serialize)]
