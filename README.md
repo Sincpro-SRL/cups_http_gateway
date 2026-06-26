@@ -240,25 +240,36 @@ The image is always placed at the top-left corner of the page. The IPP job reque
 ## Installation
 
 The gateway is a **single self-contained binary** — no runtime, no interpreter, no dependencies.
-Pick the method that fits your workflow.
+Download a pre-built binary for your platform or build from source.
+
+### Download pre-built binary
+
+Pre-built binaries for every release are attached to the
+[GitHub Releases](https://github.com/Sincpro-SRL/cups-http-gateway/releases/latest) page.
+
+| Platform | File |
+|---|---|
+| Linux x86_64 | `cups-http-gateway-linux-x86_64.tar.gz` |
+| Linux ARM64 (Raspberry Pi, Graviton) | `cups-http-gateway-linux-aarch64.tar.gz` |
+| macOS Apple Silicon (M1/M2/M3) | `cups-http-gateway-macos-arm64.tar.gz` |
+| macOS Intel | `cups-http-gateway-macos-x86_64.tar.gz` |
+| Windows x86_64 | `cups-http-gateway-windows-x86_64.zip` |
 
 ---
 
 ### Linux
 
 ```bash
-# Download and install in one line (x86_64)
+# x86_64
 curl -sSL https://github.com/Sincpro-SRL/cups-http-gateway/releases/latest/download/cups-http-gateway-linux-x86_64.tar.gz \
+  | sudo tar -xz -C /usr/local/bin
+
+# ARM64 (Raspberry Pi, AWS Graviton, etc.)
+curl -sSL https://github.com/Sincpro-SRL/cups-http-gateway/releases/latest/download/cups-http-gateway-linux-aarch64.tar.gz \
   | sudo tar -xz -C /usr/local/bin
 
 # Verify
 cups-http-gateway --version
-```
-
-```bash
-# ARM64 (e.g. Raspberry Pi, AWS Graviton)
-curl -sSL https://github.com/Sincpro-SRL/cups-http-gateway/releases/latest/download/cups-http-gateway-linux-aarch64.tar.gz \
-  | sudo tar -xz -C /usr/local/bin
 ```
 
 ---
@@ -270,7 +281,7 @@ curl -sSL https://github.com/Sincpro-SRL/cups-http-gateway/releases/latest/downl
 curl -sSL https://github.com/Sincpro-SRL/cups-http-gateway/releases/latest/download/cups-http-gateway-macos-arm64.tar.gz \
   | tar -xz -C /usr/local/bin
 
-# Intel
+# Intel Mac
 curl -sSL https://github.com/Sincpro-SRL/cups-http-gateway/releases/latest/download/cups-http-gateway-macos-x86_64.tar.gz \
   | tar -xz -C /usr/local/bin
 
@@ -278,8 +289,10 @@ curl -sSL https://github.com/Sincpro-SRL/cups-http-gateway/releases/latest/downl
 cups-http-gateway --version
 ```
 
-> macOS may quarantine the binary on first run. Clear it with:
-> `xattr -d com.apple.quarantine /usr/local/bin/cups-http-gateway`
+> macOS Gatekeeper may block the binary on first run. Clear the quarantine flag with:
+> ```bash
+> xattr -d com.apple.quarantine /usr/local/bin/cups-http-gateway
+> ```
 
 ---
 
@@ -288,7 +301,7 @@ cups-http-gateway --version
 Open **PowerShell as Administrator**:
 
 ```powershell
-# Download
+# 1. Download and extract
 $url  = "https://github.com/Sincpro-SRL/cups-http-gateway/releases/latest/download/cups-http-gateway-windows-x86_64.zip"
 $dest = "$env:ProgramFiles\cups-http-gateway"
 
@@ -296,21 +309,15 @@ New-Item -ItemType Directory -Force $dest | Out-Null
 Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\cups-http-gateway.zip"
 Expand-Archive -Path "$env:TEMP\cups-http-gateway.zip" -DestinationPath $dest -Force
 
-# Add to PATH for this session (or add permanently via System Properties)
-$env:PATH += ";$dest"
-
-# Verify
-cups-http-gateway --version
-```
-
-To make the PATH change permanent across sessions:
-
-```powershell
+# 2. Add to PATH permanently
 [System.Environment]::SetEnvironmentVariable(
   "PATH",
-  $env:PATH + ";$env:ProgramFiles\cups-http-gateway",
+  [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";$dest",
   [System.EnvironmentVariableTarget]::Machine
 )
+
+# 3. Open a new PowerShell window, then verify
+cups-http-gateway --version
 ```
 
 ---
@@ -329,8 +336,8 @@ cargo install cups-http-gateway
 git clone https://github.com/Sincpro-SRL/cups-http-gateway
 cd cups-http-gateway
 cargo build --release
-# Linux / macOS: target/release/cups-http-gateway
-# Windows:       target\release\cups-http-gateway.exe
+# Linux / macOS: ./target/release/cups-http-gateway
+# Windows:       .\target\release\cups-http-gateway.exe
 ```
 
 ---
@@ -341,38 +348,45 @@ cargo build --release
 cups-http-gateway [OPTIONS]
 
 Options:
-  --host       <HOST>       Gateway bind address  [default: 0.0.0.0]
-  --port       <PORT>       Gateway HTTP port     [default: 6631]
-  --cups-host  <CUPS_HOST>  CUPS server hostname  [default: localhost]
-  --cups-port  <CUPS_PORT>  CUPS IPP port         [default: 631]
-  --log-level  <LEVEL>      Tracing level         [default: info]
-  -h, --help                Print help
-  -V, --version             Print version
+  --host           <HOST>       Bind address for the HTTP gateway  [default: 0.0.0.0]
+  --port           <PORT>       HTTP port for the gateway          [default: 6631]
+  --cups-host      <CUPS_HOST>  CUPS server hostname or IP         [default: localhost]
+  --cups-port      <CUPS_PORT>  CUPS IPP port                      [default: 631]
+  --log-level      <LEVEL>      Log verbosity: error, warn, info, debug, trace  [default: info]
+  --caps-cache-ttl <SECONDS>    How long to cache printer capabilities (0 = disabled)  [default: 3600]
+  -h, --help                    Print help
+  -V, --version                 Print version
 ```
+
+The gateway runs in the foreground. Stop it with `Ctrl+C`. For production deployments see the
+[Deployment](#deployment) section below (systemd / launchd / Windows Service).
 
 ### Linux / macOS
 
 ```bash
-# CUPS is on the same machine (most common)
+# CUPS on the same machine (most common setup)
 cups-http-gateway
 
-# CUPS is on another host in the network
-cups-http-gateway --cups-host 192.168.1.50 --cups-port 631
+# CUPS running on another machine in the network
+cups-http-gateway --cups-host 192.168.1.50
 
-# Custom gateway port + verbose logs
+# Custom gateway port + debug logs
 cups-http-gateway --port 8080 --log-level debug
 
-# Bind only to localhost (don't expose outside this machine)
-cups-http-gateway --host 127.0.0.1 --port 6631
+# Only accessible from this machine (not exposed to the network)
+cups-http-gateway --host 127.0.0.1
 ```
 
 ### Windows (PowerShell)
 
-```powershell
-# CUPS is on another host in the network (Windows has no native CUPS)
-cups-http-gateway --cups-host 192.168.1.50 --cups-port 631
+On Windows, CUPS is not native — the gateway connects to a CUPS server running elsewhere
+on the network (Linux machine, NAS, Raspberry Pi, etc.).
 
-# Custom port
+```powershell
+# Connect to a CUPS server at 192.168.1.50
+cups-http-gateway --cups-host 192.168.1.50
+
+# Custom gateway port + verbose logs
 cups-http-gateway --cups-host 192.168.1.50 --port 8080 --log-level debug
 ```
 
@@ -380,7 +394,7 @@ cups-http-gateway --cups-host 192.168.1.50 --port 8080 --log-level debug
 
 ```bash
 curl http://localhost:6631/status
-# {"ok":true,"version":"0.1.0","cups":"localhost:631"}
+# {"ok":true,"version":"0.2.0","cups":"localhost:631"}
 
 curl http://localhost:6631/printers
 # {"printers":["HP_LaserJet","Brother_HL"]}
