@@ -148,39 +148,34 @@ build-windows-x64:
 	cargo build --release --target x86_64-pc-windows-msvc
 
 package-linux-x64: $(DIST_DIR)
-	$(eval TARGET := x86_64-unknown-linux-gnu)
-	cp target/$(TARGET)/release/$(BINARY_NAME) $(DIST_DIR)/$(BINARY_NAME)
-	tar -czf $(DIST_DIR)/$(BINARY_NAME)-$(CARGO_VERSION)-$(TARGET).tar.gz -C $(DIST_DIR) $(BINARY_NAME)
+	cp target/x86_64-unknown-linux-gnu/release/$(BINARY_NAME) $(DIST_DIR)/$(BINARY_NAME)
+	tar -czf $(DIST_DIR)/$(BINARY_NAME)-linux-x86_64.tar.gz -C $(DIST_DIR) $(BINARY_NAME)
 	rm $(DIST_DIR)/$(BINARY_NAME)
-	echo "Packaged: $(DIST_DIR)/$(BINARY_NAME)-$(CARGO_VERSION)-$(TARGET).tar.gz"
+	echo "Packaged: $(DIST_DIR)/$(BINARY_NAME)-linux-x86_64.tar.gz"
 
 package-linux-arm64: $(DIST_DIR)
-	$(eval TARGET := aarch64-unknown-linux-gnu)
-	cp target/$(TARGET)/release/$(BINARY_NAME) $(DIST_DIR)/$(BINARY_NAME)
-	tar -czf $(DIST_DIR)/$(BINARY_NAME)-$(CARGO_VERSION)-$(TARGET).tar.gz -C $(DIST_DIR) $(BINARY_NAME)
+	cp target/aarch64-unknown-linux-gnu/release/$(BINARY_NAME) $(DIST_DIR)/$(BINARY_NAME)
+	tar -czf $(DIST_DIR)/$(BINARY_NAME)-linux-aarch64.tar.gz -C $(DIST_DIR) $(BINARY_NAME)
 	rm $(DIST_DIR)/$(BINARY_NAME)
-	echo "Packaged: $(DIST_DIR)/$(BINARY_NAME)-$(CARGO_VERSION)-$(TARGET).tar.gz"
+	echo "Packaged: $(DIST_DIR)/$(BINARY_NAME)-linux-aarch64.tar.gz"
 
 package-macos-x64: $(DIST_DIR)
-	$(eval TARGET := x86_64-apple-darwin)
-	cp target/$(TARGET)/release/$(BINARY_NAME) $(DIST_DIR)/$(BINARY_NAME)
-	tar -czf $(DIST_DIR)/$(BINARY_NAME)-$(CARGO_VERSION)-$(TARGET).tar.gz -C $(DIST_DIR) $(BINARY_NAME)
+	cp target/x86_64-apple-darwin/release/$(BINARY_NAME) $(DIST_DIR)/$(BINARY_NAME)
+	tar -czf $(DIST_DIR)/$(BINARY_NAME)-macos-x86_64.tar.gz -C $(DIST_DIR) $(BINARY_NAME)
 	rm $(DIST_DIR)/$(BINARY_NAME)
-	echo "Packaged: $(DIST_DIR)/$(BINARY_NAME)-$(CARGO_VERSION)-$(TARGET).tar.gz"
+	echo "Packaged: $(DIST_DIR)/$(BINARY_NAME)-macos-x86_64.tar.gz"
 
 package-macos-arm64: $(DIST_DIR)
-	$(eval TARGET := aarch64-apple-darwin)
-	cp target/$(TARGET)/release/$(BINARY_NAME) $(DIST_DIR)/$(BINARY_NAME)
-	tar -czf $(DIST_DIR)/$(BINARY_NAME)-$(CARGO_VERSION)-$(TARGET).tar.gz -C $(DIST_DIR) $(BINARY_NAME)
+	cp target/aarch64-apple-darwin/release/$(BINARY_NAME) $(DIST_DIR)/$(BINARY_NAME)
+	tar -czf $(DIST_DIR)/$(BINARY_NAME)-macos-arm64.tar.gz -C $(DIST_DIR) $(BINARY_NAME)
 	rm $(DIST_DIR)/$(BINARY_NAME)
-	echo "Packaged: $(DIST_DIR)/$(BINARY_NAME)-$(CARGO_VERSION)-$(TARGET).tar.gz"
+	echo "Packaged: $(DIST_DIR)/$(BINARY_NAME)-macos-arm64.tar.gz"
 
 package-windows-x64: $(DIST_DIR)
-	$(eval TARGET := x86_64-pc-windows-msvc)
-	cp target/$(TARGET)/release/$(BINARY_NAME).exe $(DIST_DIR)/$(BINARY_NAME).exe
-	powershell -Command "Compress-Archive -Path $(DIST_DIR)/$(BINARY_NAME).exe -DestinationPath $(DIST_DIR)/$(BINARY_NAME)-$(CARGO_VERSION)-$(TARGET).zip -Force"
+	cp target/x86_64-pc-windows-msvc/release/$(BINARY_NAME).exe $(DIST_DIR)/$(BINARY_NAME).exe
+	powershell -Command "Compress-Archive -Path $(DIST_DIR)/$(BINARY_NAME).exe -DestinationPath $(DIST_DIR)/$(BINARY_NAME)-windows-x86_64.zip -Force"
 	rm $(DIST_DIR)/$(BINARY_NAME).exe
-	echo "Packaged: $(DIST_DIR)/$(BINARY_NAME)-$(CARGO_VERSION)-$(TARGET).zip"
+	echo "Packaged: $(DIST_DIR)/$(BINARY_NAME)-windows-x86_64.zip"
 
 release-linux-x64: build-linux-x64 package-linux-x64
 release-linux-arm64: install-cross build-linux-arm64 package-linux-arm64
